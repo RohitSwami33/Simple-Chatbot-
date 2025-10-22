@@ -4,19 +4,20 @@ streamlit==1.47.1
 # Core LangChain and LangGraph
 langchain==0.3.27
 langchain-core==0.3.72
+langchain-community==0.3.20
 langgraph==0.6.1
-langchain-community
-
-# LangGraph Memory
 langgraph-checkpoint-sqlite==2.0.11
 
 # Google AI Integration
 langchain-google-genai
 google-generativeai
 
+# Tool Dependencies
+duckduckgo-search==7.3.0
+requests==2.32.5
+
 # Environment Variables
 python-dotenv==1.1.1
 
-# Database (SQLAlchemy is needed by langgraph-checkpoint-sqlite)
+# Database
 SQLAlchemy==2.0.42
-
