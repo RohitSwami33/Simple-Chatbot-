@@ -1,4 +1,4 @@
-# langgraph_tool_backend.py
+
 
 import os
 import sqlite3
@@ -14,12 +14,10 @@ from langgraph.graph.message import add_messages
 # Google Gemini Import
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-# Load environment variables from .env file (for local development)
+
 load_dotenv()
 
-# -------------------
-# 1. LLM Initialization with Error Handling
-# -------------------
+
 try:
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
@@ -51,11 +49,7 @@ def chat_node(state: ChatState):
     response = llm.invoke(messages)
     return {"messages": [response]}
 
-# -------------------
-# 4. Checkpointer (for persistent memory)
-# -------------------
-# Use SqliteSaver for deployment so memory persists between app restarts.
-# The database file 'chatbot.db' will be created automatically.
+
 try:
     conn = sqlite3.connect("chatbot.db", check_same_thread=False)
     checkpointer = SqliteSaver(conn)
@@ -64,9 +58,7 @@ except Exception as e:
     print(f"!!! ERROR: Could not initialize SQLite checkpointer. Reason: {e} !!!")
     raise
 
-# -------------------
-# 5. Graph Compilation
-# -------------------
+
 graph = StateGraph(ChatState)
 
 # Add the single chat node to the graph
@@ -79,9 +71,8 @@ graph.add_edge("chat_node", END)
 # Compile the graph with the checkpointer to enable memory
 chatbot = graph.compile(checkpointer=checkpointer)
 
-# -------------------
-# 6. Helper Function
-# -------------------
+
+
 def retrieve_all_threads():
     """Helper function to get all conversation threads from the database."""
     all_threads = set()
@@ -95,3 +86,4 @@ def retrieve_all_threads():
     except Exception as e:
         print(f"!!! ERROR: Could not retrieve threads. Reason: {e} !!!")
     return list(all_threads)
+
