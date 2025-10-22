@@ -3,22 +3,28 @@
 from langgraph.graph import StateGraph, START, END
 from typing import TypedDict, Annotated
 from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_openai import ChatOpenAI
+#from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import tool
 from dotenv import load_dotenv
+from langchain_google_genai import ChatGoogleGenerativeAI
 import sqlite3
 import requests
+
 
 load_dotenv()
 
 # -------------------
 # 1. LLM
 # -------------------
-llm = ChatOpenAI()
+# NEW CODE
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.0-flash-exp",  # You can also use "gemini-1.5-pro" or "gemini-1.5-flash"
+    temperature=0
+)
 
 # -------------------
 # 2. Tools
