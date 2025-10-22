@@ -1,37 +1,50 @@
-# backend.py
+# langgraph_tool_backend.py
 
+import os
+import sqlite3
+import requests
+from dotenv import load_dotenv
+
+# LangGraph and LangChain Imports
 from langgraph.graph import StateGraph, START, END
-from typing import TypedDict, Annotated
-from langchain_core.messages import BaseMessage, HumanMessage
-#from langchain_openai import ChatOpenAI
+from typing import TypedDict, Annotated, List
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import tool
-from dotenv import load_dotenv
+from langchain_community.tools import DuckDuckGoSearchRun
+
+# Google Gemini Import
 from langchain_google_genai import ChatGoogleGenerativeAI
-import sqlite3
-import requests
 
-
+# Load environment variables from .env file (for local development)
 load_dotenv()
 
 # -------------------
-# 1. LLM
+# 1. LLM Initialization with Error Handling
 # -------------------
-# NEW CODE
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash-exp",  # You can also use "gemini-1.5-pro" or "gemini-1.5-flash"
-    temperature=0
-)
+try:
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY environment variable not set. Please configure it in Streamlit Secrets.")
+        
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash-exp",
+        temperature=0
+    )
+    print("--- LLM INITIALIZED SUCCESSFULLY ---")
+except Exception as e:
+    print(f"!!! CRITICAL ERROR: Could not initialize LLM. Reason: {e} !!!")
+    raise
 
 # -------------------
-# 2. Tools
+# 2. Tool Definitions
 # -------------------
-# Tools
+# Web Search Tool
 search_tool = DuckDuckGoSearchRun(region="us-en")
 
+# Calculator Tool
 @tool
 def calculator(first_num: float, second_num: float, operation: str) -> dict:
     """
@@ -56,66 +69,100 @@ def calculator(first_num: float, second_num: float, operation: str) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-
-
-
+# Stock Price Tool
 @tool
 def get_stock_price(symbol: str) -> dict:
     """
     Fetch latest stock price for a given symbol (e.g. 'AAPL', 'TSLA') 
-    using Alpha Vantage with API key in the URL.
+    using Alpha Vantage. Requires an ALPHA_VANTAGE_API_KEY.
     """
-    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey=C9PE94QUEW9VWGFM"
-    r = requests.get(url)
-    return r.json()
+    api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+    if not api_key:
+        return {"error": "ALPHA_VANTAGE_API_KEY not set. Please configure it in Streamlit Secrets."}
+        
+    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={api_key}"
+    try:
+        r = requests.get(url)
+        r.raise_for_status()  # Raises an HTTPError for bad responses (4xx or 5xx)
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"error": f"Failed to fetch stock price: {e}"}
 
+# List of all tools available to the agent
+tools = [search_tool, calculator, get_stock_price]
 
-
-tools = [search_tool, get_stock_price, calculator]
+# Bind the tools to the LLM
 llm_with_tools = llm.bind_tools(tools)
 
 # -------------------
-# 3. State
+# 3. State Definition
 # -------------------
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 # -------------------
-# 4. Nodes
+# 4. Node Definitions
 # -------------------
-def chat_node(state: ChatState):
-    """LLM node that may answer or request a tool call."""
-    messages = state["messages"]
+def agent_node(state: ChatState):
+    """The main agent node that decides whether to use a tool or answer directly."""
+    messages = state['messages']
     response = llm_with_tools.invoke(messages)
     return {"messages": [response]}
 
+# The ToolNode is a pre-built node from LangGraph that executes tools
 tool_node = ToolNode(tools)
 
 # -------------------
-# 5. Checkpointer
+# 5. Checkpointer (for persistent memory)
 # -------------------
-conn = sqlite3.connect(database="chatbot.db", check_same_thread=False)
-checkpointer = SqliteSaver(conn=conn)
+try:
+    conn = sqlite3.connect("chatbot.db", check_same_thread=False)
+    checkpointer = SqliteSaver(conn)
+    print("--- SQLITE CHECKPOINTER INITIALIZED ---")
+except Exception as e:
+    print(f"!!! ERROR: Could not initialize SQLite checkpointer. Reason: {e} !!!")
+    raise
 
 # -------------------
-# 6. Graph
+# 6. Graph Compilation
 # -------------------
 graph = StateGraph(ChatState)
-graph.add_node("chat_node", chat_node)
+
+# Add nodes to the graph
+graph.add_node("agent", agent_node)
 graph.add_node("tools", tool_node)
 
-graph.add_edge(START, "chat_node")
+# Define the entry point
+graph.set_entry_point("agent")
 
-graph.add_conditional_edges("chat_node",tools_condition)
-graph.add_edge('tools', 'chat_node')
+# Add conditional edges from the agent node
+# The `tools_condition` function checks if the LLM's last message has tool calls
+graph.add_conditional_edges(
+    "agent",
+    tools_condition,
+    # If tools are called, route to the "tools" node, otherwise end the conversation
+    {"tools": "tools", END: END}
+)
 
+# Add an edge from the "tools" node back to the "agent" node
+# This allows the agent to use the tool's output to generate a final answer
+graph.add_edge("tools", "agent")
+
+# Compile the graph with the checkpointer to enable memory
 chatbot = graph.compile(checkpointer=checkpointer)
 
 # -------------------
-# 7. Helper
+# 7. Helper Function
 # -------------------
 def retrieve_all_threads():
+    """Helper function to get all conversation threads from the database."""
     all_threads = set()
-    for checkpoint in checkpointer.list(None):
-        all_threads.add(checkpoint.config["configurable"]["thread_id"])
+    try:
+        for checkpoint in checkpointer.list(None):
+            if checkpoint.config and "configurable" in checkpoint.config:
+                thread_id = checkpoint.config["configurable"].get("thread_id")
+                if thread_id:
+                    all_threads.add(thread_id)
+    except Exception as e:
+        print(f"!!! ERROR: Could not retrieve threads. Reason: {e} !!!")
     return list(all_threads)
